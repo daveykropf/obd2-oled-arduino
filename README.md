@@ -12,3 +12,9 @@ I used the following libraries and made some changes to make the 64x32 OLED disp
 
 ### Parts
 - TODO
+
+### Documentation / Resources
+
+- [Online image to byte arrays converter](http://javl.github.io/image2cpp/)
+- [VDO NTC Fluide Temperature Probe, Steinhart Hart Coefficients?](https://forum.arduino.cc/index.php?topic=211816.0)
+- [V3 MicroSquirt® - QuickStart Guide](http://www.useasydocs.com/theory/ntc.htm)
