@@ -159,7 +159,7 @@ const unsigned char intakeTempBitmap [] PROGMEM = {
 const int buttonPin = 5;
 
 // Variables will change:
-int totalObdModusOptions = 5;
+int totalObdModusOptions = 6;
 int currentObdModus = 0;
 int lastModusBeforeSleep = 0;
 int buttonState;
@@ -183,6 +183,17 @@ const long updateDataIntervalStandby = 2000;
 const long checkForLastResponseInterval = 1000;
 
 char buffer[456];  // Canbus data will be temporarily stored to this buffer before being outputted to the display
+char oilTempDisplayBuffer[100];
+
+// Variables for calculating and reading OIL_TEMP
+int oilTempSensorPin = 0; // Pin: A0
+int oilTempRawValue = 0;
+int oilTempVin = 5;
+float oilTempVout = 0;
+float oilTempR1 = 1000;
+float oilTempR2 = 0;
+float oilTempBuffer = 0;
+float oilTempResistance = 0;
 
 void setup()   {
   Serial.begin(9600);
@@ -255,10 +266,10 @@ void checkForButtonChanges(unsigned long currentMillis) {
 }
 
 void checkForStandbyMode(unsigned long currentMillis) {
-  if (currentObdModus == 4 && !shouldShowIcon && !inStandbyModus) {
+  if (currentObdModus == 5 && !shouldShowIcon && !inStandbyModus) {
     inStandbyModus = true;
     sleepDisplay();
-  } else if (currentObdModus != 4 && inStandbyModus) {
+  } else if (currentObdModus != 5 && inStandbyModus) {
     inStandbyModus = false;
     wakeDisplay();
     showStartupLogo();
@@ -288,16 +299,19 @@ void showIcon(unsigned long currentMillis) {
       case 0: // ECU_VOLTAGE
         display.drawBitmap(0, 0, batteryBitmap, 64, 32, WHITE);
         break;
-      case 1: // ENGINE_COOLANT_TEMP
+      case 1: // OIL_TEMP
+        display.drawBitmap(0, 0, oilBitmap, 64, 32, WHITE);
+        break;
+      case 2: // ENGINE_COOLANT_TEMP
         display.drawBitmap(0, 0, engineCoolantBitmap, 64, 32, WHITE);
         break;
-      case 2: // INTAKE_TEMP
+      case 3: // INTAKE_TEMP
         display.drawBitmap(0, 0, intakeTempBitmap, 64, 32, WHITE);
         break;
-      case 3: // ENGINE_RPM
+      case 4: // ENGINE_RPM
         display.drawBitmap(0, 0, engineRPMBitmap, 64, 32, WHITE);
         break;
-      case 4: // STANDBY
+      case 5: // STANDBY
         display.drawBitmap(0, 0, standbyBitmap, 64, 32, WHITE);
         break;
     }
@@ -312,9 +326,9 @@ void showIcon(unsigned long currentMillis) {
 
 void updateData(unsigned long currentMillis) {
   long currentUpdateDataInterval;
-  if (currentObdModus == 3) {
+  if (currentObdModus == 4) {
     currentUpdateDataInterval = updateDataIntervalShort;
-  } else if (currentObdModus == 4) {
+  } else if (currentObdModus == 5) {
     currentUpdateDataInterval = updateDataIntervalStandby;
   } else {
     currentUpdateDataInterval = updateDataIntervalLong;
@@ -326,19 +340,25 @@ void updateData(unsigned long currentMillis) {
         Canbus.ecu_req(ECU_VOLTAGE, buffer);
         showVoltage(buffer);
         break;
-      case 1: // ENGINE_COOLANT_TEMP
+      case 1: // OIL TEMP
+        // Just ask for some data from OBD, otherwise the display will turn into standby mode.
+        Canbus.ecu_req(ENGINE_RUNTIME, buffer);
+        readOilTemperatureSensor();
+        showTemperature(oilTempDisplayBuffer);
+        break;
+      case 2: // ENGINE_COOLANT_TEMP
         Canbus.ecu_req(ENGINE_COOLANT_TEMP, buffer);
         showTemperature(buffer);
         break;
-      case 2: // INTAKE_TEMP
+      case 3: // INTAKE_TEMP
         Canbus.ecu_req(INTAKE_TEMP, buffer);
         showTemperature(buffer);
         break;
-      case 3: // ENGINE_RPM
+      case 4: // ENGINE_RPM
         Canbus.ecu_req(ENGINE_RPM, buffer);
         showEngineRPM(buffer);
         break;
-      case 4: // ENGINE_RUNTIME
+      case 5: // ENGINE_RUNTIME
         Canbus.ecu_req(ENGINE_RUNTIME, buffer);
         break;
     }
@@ -352,13 +372,13 @@ void checkForLastResponse(unsigned long currentMillis) {
     unsigned long lastResponse = Canbus.last_response();
     unsigned long diff = currentMillis - lastResponse;
 
-    if (diff > 5000 && !inStandbyModus && currentObdModus != 4) {
+    if (diff > 5000 && !inStandbyModus && currentObdModus != 5) {
       lastModusBeforeSleep = currentObdModus;
-      currentObdModus = 4;
+      currentObdModus = 5;
       resetValues(currentMillis);
     }
 
-    if (diff < 2000 && currentObdModus == 4 && inStandbyModus) {
+    if (diff < 2000 && currentObdModus == 5 && inStandbyModus) {
       currentObdModus = lastModusBeforeSleep;
       resetValues(currentMillis);
     }
@@ -454,4 +474,20 @@ void sleepDisplay() {
 
 void wakeDisplay() {
   display.ssd1306_command(SSD1306_DISPLAYON);
+}
+
+void readOilTemperatureSensor() {
+  oilTempRawValue = analogRead(oilTempSensorPin);
+  if (oilTempRawValue) {
+    oilTempBuffer = oilTempRawValue * oilTempVin;
+    oilTempVout = (oilTempBuffer) / 1024.0;
+    oilTempBuffer = (oilTempVin / oilTempVout) - 1;
+    oilTempR2 = oilTempR1 * oilTempBuffer;
+
+    oilTempResistance = oilTempR2;
+    float tempInKelvin = log(oilTempResistance);
+    tempInKelvin = 1 / (9.3058310e-4 + (3.7101259e-4 * tempInKelvin) + (-5.8947468e-7 * tempInKelvin * tempInKelvin * tempInKelvin)); // Temperature in Kelvin
+    float tempInCelsius = tempInKelvin - 273.15;
+    sprintf(oilTempDisplayBuffer,"%d",(int) tempInCelsius);
+  }
 }
